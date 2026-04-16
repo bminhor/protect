@@ -2,6 +2,9 @@
 ```bash
 git clone https://github.com/bminhor/protect.git
 cd protect
+python -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -U pip
 pip install -r requirements.txt
 ```
 
