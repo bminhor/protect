@@ -91,6 +91,7 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
                 all_comments.append({
                     "id": top_id,
                     "author": top_snippet["authorDisplayName"],
+                    "authorChannelId": top_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
                     "text": top_snippet["textDisplay"],
                     "publishedAt": top_published_at,
                     "link": f"https://www.youtube.com/watch?v={video_id}&lc={top_id}"
@@ -113,6 +114,7 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
                             all_comments.append({
                                 "id": r_id,
                                 "author": r_snippet["authorDisplayName"],
+                                "authorChannelId": r_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
                                 "text": r_snippet["textDisplay"],
                                 "publishedAt": r_published_at,
                                 "link": f"https://www.youtube.com/watch?v={video_id}&lc={r_id}"
@@ -227,6 +229,7 @@ def main():
                         if bad_comment:
                             found_harassment_comments.append({
                                 "작성자": bad_comment["author"],
+                                "채널 ID": bad_comment["authorChannelId"],
                                 "댓글 내용": bad_comment["text"],
                                 "댓글 게시 시간": bad_comment["publishedAt"],
                                 "댓글 링크": bad_comment["link"]
