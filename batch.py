@@ -34,6 +34,8 @@ def main():
     
     parser.add_argument("-D", metavar="yymmdd", help="해당 날짜 이후 업로드된 영상만 쿼리")
     parser.add_argument("-d", metavar="yymmdd", help="main.py에 전달할 댓글 쿼리 날짜")
+
+    parser.add_argument("-S", "--single", action="store_true", help="main.py를 싱글 스레드 모드로 실행")
     args = parser.parse_args()
 
     if not YOUTUBE_API_KEY:
@@ -176,6 +178,8 @@ def main():
     command = ["python", TARGET_SCRIPT]
     if args.d:
         command.extend(["-d", args.d])
+    if args.single:
+        command.append("-S")        
     command.append(videos_json_str)
 
     print("-" * 50)

@@ -26,6 +26,9 @@ python main.py dQw4w9WgXcQ abcdefg1234
 
 # 특정 날짜(YYMMDD) 이후 작성된 댓글만 분석
 python main.py dQw4w9WgXcQ -d 260416
+
+# 싱글 스레드 모드로 실행 (503 에러 방지)
+python main.py dQw4w9WgXcQ -S
 ```
 
 ### 2. 채널 또는 재생목록 분석 (batch.py)
@@ -46,8 +49,11 @@ python batch.py @KBSKpop -D 260101
 # 특정 날짜(YYMMDD) 이후 작성된 댓글만 분석
 python batch.py @KBSKpop -d 260416
 
+# 싱글 스레드 모드로 실행 (503 에러 방지)
+python batch.py @KBSKpop -S
+
 # 복합 사용
-python batch.py @KBSKpop -D 260101 -d 260416 -s
+python batch.py @KBSKpop -D 260101 -d 260416 -s -S
 
 # 재생목록의 전체 영상 분석 (재생목록 ID 또는 재생목록 URL)
 python batch.py PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

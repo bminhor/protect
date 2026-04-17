@@ -169,10 +169,24 @@ def analyze_comments_batch(gemini_client, comments_batch):
                 time.sleep(sleep_time)
                 retries += 1
 
+def process_harassment_results(results, batch, found_comments_list):
+    for result in results:
+        if result.get("is_sexual_harassment"):
+            bad_comment = next((c for c in batch if c["id"] == result["comment_id"]), None)
+            if bad_comment:
+                found_comments_list.append({
+                    "작성자": bad_comment["author"],
+                    "채널 ID": bad_comment["authorChannelId"],
+                    "댓글 내용": bad_comment["text"],
+                    "댓글 게시 시간": bad_comment["publishedAt"],
+                    "댓글 링크": bad_comment["link"]
+                })
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("videos", nargs='+')
     parser.add_argument("-d", "--date")
+    parser.add_argument("-S", "--single", action="store_true")
     args = parser.parse_args()
 
     if not YOUTUBE_API_KEY or not GEMINI_API_KEY:
@@ -217,24 +231,18 @@ def main():
         
         found_harassment_comments = []
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_batch = {executor.submit(analyze_comments_batch, gemini_client, batch): batch for batch in batches}
-            
-            for future in as_completed(future_to_batch):
-                batch = future_to_batch[future]
-                results = future.result()
+        if args.single:
+            for batch in batches:
+                results = analyze_comments_batch(gemini_client, batch)
+                process_harassment_results(results, batch, found_harassment_comments)
+        else:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_batch = {executor.submit(analyze_comments_batch, gemini_client, batch): batch for batch in batches}
                 
-                for result in results:
-                    if result.get("is_sexual_harassment"):
-                        bad_comment = next((c for c in batch if c["id"] == result["comment_id"]), None)
-                        if bad_comment:
-                            found_harassment_comments.append({
-                                "작성자": bad_comment["author"],
-                                "채널 ID": bad_comment["authorChannelId"],
-                                "댓글 내용": bad_comment["text"],
-                                "댓글 게시 시간": bad_comment["publishedAt"],
-                                "댓글 링크": bad_comment["link"]
-                            })
+                for future in as_completed(future_to_batch):
+                    batch = future_to_batch[future]
+                    results = future.result()
+                    process_harassment_results(results, batch, found_harassment_comments)
 
         total_found = len(found_harassment_comments)
         print(f"{total_found}개의 부적절한 댓글 식별.")
