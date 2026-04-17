@@ -226,15 +226,25 @@ def main():
                 return
 
         video_list = []
+        video_tags_map = {}
+
         for v in args.videos:
             if v.startswith('[') and v.endswith(']'):
                 try:
                     parsed = json.loads(v)
-                    video_list.extend(parsed)
+                    for item in parsed:
+                        if isinstance(item, dict) and "id" in item:
+                            video_list.append(item["id"])
+                            video_tags_map[item["id"]] = item.get("tags", "")
+                        else:
+                            video_list.append(item)
+                            video_tags_map[item] = ""
                 except json.JSONDecodeError:
                     video_list.append(v)
+                    video_tags_map[v] = ""
             else:
                 video_list.append(v)
+                video_tags_map[v] = ""
 
         youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
@@ -310,13 +320,15 @@ def main():
                 
                 formatted_comments = []
                 for c in found_harassment_comments:
+                    vid = c["video_id"]
                     formatted_comments.append({
-                        "영상 ID": c["video_id"],
+                        "영상 ID": vid,
                         "작성자": c["작성자"],
                         "채널 ID": c["채널 ID"],
                         "댓글 내용": c["댓글 내용"],
                         "댓글 게시 시간": c["댓글 게시 시간"],
-                        "댓글 링크": c["댓글 링크"]
+                        "댓글 링크": c["댓글 링크"],
+                        "매칭된 태그": video_tags_map.get(vid, "")
                     })
                     
                 df = pd.DataFrame(formatted_comments)
@@ -343,6 +355,7 @@ def main():
                 vid = comment.get("video_id")
                 if vid in results_by_video:
                     clean_comment = {k: v for k, v in comment.items() if k != "video_id"}
+                    clean_comment["매칭된 태그"] = video_tags_map.get(vid, "")
                     results_by_video[vid].append(clean_comment)
 
             for vid in pending_videos:

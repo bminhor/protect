@@ -138,16 +138,16 @@ def process_target(target, args, youtube, limit_date):
                 title = v_item["snippet"].get("title", "")
                 tags = v_item["snippet"].get("tags", [])
                 
-                has_tag = False
+                matched_tags = []
                 for tag in TAGS:
                     tag_lower = tag.lower()
                     if tag_lower in title.lower() or any(tag_lower in t.lower() for t in tags):
-                        has_tag = True
-                        break
-                if has_tag:
-                    filtered_videos.append(v_id)
+                        matched_tags.append(tag)
+                        
+                if matched_tags:
+                    filtered_videos.append({"id": v_id, "tags": ", ".join(matched_tags)})
     else:
-        filtered_videos = video_ids
+        filtered_videos = [{"id": v_id, "tags": ""} for v_id in video_ids]
 
     print(f"✅ 총 {len(filtered_videos)}개의 유효한 영상을 찾았습니다.")
 
