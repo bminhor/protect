@@ -133,6 +133,7 @@ def analyze_comments_batch(gemini_client, comments_batch):
     payload_for_gemini = [{"id": c["id"], "text": c["text"]} for c in comments_batch]
     prompt = f"{PROMPT}\n\n댓글 데이터:\n{json.dumps(payload_for_gemini, ensure_ascii=False)}"
     
+    retries = 0
     while True:
         wait_for_rate_limit()
         
@@ -163,10 +164,10 @@ def analyze_comments_batch(gemini_client, comments_batch):
                 print(f"🚨 일일 요청 한도(RPD) 초과. 내일 다시 시도하거나, 다른 GEMINI_API_KEY를 사용하세요.")
                 os._exit(1)
             else:
-                jitter = random.uniform(2.0, 5.0)
-                print(error_msg)
-                print(f"⚠️ API 호출 오류 발생. {jitter:.2f}초 대기 후 재시도합니다...")
-                time.sleep(jitter)
+                sleep_time = (2 ** retries) + random.uniform(1.0, 3.0)
+                print(f"⚠️ API 호출 오류 발생. 서버 과부하 가능성. {sleep_time:.2f}초 대기 후 재시도합니다... (재시도: {retries + 1})")
+                time.sleep(sleep_time)
+                retries += 1
 
 def main():
     parser = argparse.ArgumentParser()
