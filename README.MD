@@ -65,3 +65,4 @@ python batch.py PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | --- | --- | --- | --- | --- |
 
 위와 같은 형식으로 `/output/영상ID.csv` 경로에 저장됩니다.
+merge.py를 실행하여 `/output.csv`로 병합할 수 있습니다.
