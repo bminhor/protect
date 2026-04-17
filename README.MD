@@ -57,6 +57,9 @@ python batch.py @KBSKpop -D 260101 -d 260416 -s -S
 
 # 재생목록의 전체 영상 분석 (재생목록 ID 또는 재생목록 URL)
 python batch.py PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# 다중 채널 및 다중 재생목록의 전체 영상 분석
+python batch.py @KBSKpop @MBCkpop PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 ## Output

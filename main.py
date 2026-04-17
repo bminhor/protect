@@ -269,8 +269,8 @@ def main():
         batches = [all_comments_pool[i:i + BATCH_SIZE] for i in range(0, len(all_comments_pool), BATCH_SIZE)]
         total_batches = len(batches)
         
-        print(f"\n📦 총 {len(pending_videos)}개의 영상에서 {len(all_comments_pool)}개의 댓글을 수집했습니다.")
-        print(f"🚀 {BATCH_SIZE}개 단위로 묶어 총 {total_batches}번의 API 요청을 시작합니다...\n")
+        print(f"📦 총 {len(pending_videos)}개의 영상에서 {len(all_comments_pool)}개의 댓글을 수집했습니다.")
+        print(f"🚀 {BATCH_SIZE}개 단위로 묶어 총 {total_batches}번의 API 요청을 시작합니다...")
 
         processed_batches = 0
 
@@ -290,8 +290,6 @@ def main():
                     processed_batches += 1
                     print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료", end='\r')
                     
-        print("\n\n✅ 분석이 완료되었습니다. 파일 저장을 시작합니다.\n")
-
     except KeyboardInterrupt:
         is_interrupted = True
         print("\n\n" + "🚨" * 25)
@@ -376,12 +374,10 @@ def main():
         hours, rem = divmod(elapsed_time, 3600)
         minutes, seconds = divmod(rem, 60)
         
-        print("-" * 50)
         print("📊 [작업 종합 리포트]")
         print(f"⏱️ 총 실행 시간: {int(hours)}시간 {int(minutes)}분 {seconds:.2f}초")
         print(f"🎬 분석(시도)한 영상 수: {processed_video_count}개")
         print(f"🚨 총 식별된 부적절한 댓글 수: {grand_total_found}개")
-        print("-" * 50)
 
 if __name__ == "__main__":
     main()

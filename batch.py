@@ -25,48 +25,32 @@ def parse_yymmdd(date_str):
         print("❌ 오류: 날짜 형식은 yymmdd 이어야 합니다. (예: 240416)")
         sys.exit(1)
 
-def main():
-    parser = argparse.ArgumentParser(description="YouTube 채널 또는 재생목록 영상 일괄 쿼리 및 실행기")
-    parser.add_argument("target", help="채널 핸들(예: @KBSKpop), 재생목록 ID(PL...), 또는 재생목록 전체 링크")
+def process_target(target, args, youtube, limit_date):
+    print(f"==================================================")
+    print(f"🎯 [분석 시작] {target}")
     
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("-s", action="store_true", help="쇼츠(Shorts) 영상만 쿼리 (채널 핸들 입력 시에만 동작)")
-    group.add_argument("-l", action="store_true", help="일반(Long-form) 영상만 쿼리 (채널 핸들 입력 시에만 동작)")
-    
-    parser.add_argument("-D", metavar="yymmdd", help="해당 날짜 이후 업로드된 영상만 쿼리")
-    parser.add_argument("-d", metavar="yymmdd", help="main.py에 전달할 댓글 쿼리 날짜")
-
-    parser.add_argument("-S", "--single", action="store_true", help="main.py를 싱글 스레드 모드로 실행")
-    args = parser.parse_args()
-
-    if not YOUTUBE_API_KEY:
-        print("❌ 오류: YOUTUBE_API_KEY를 확인해주세요.")
-        return
-
-    target = args.target.strip()
+    target_clean = target.strip()
     playlist_id = None
     handle = None
 
-    if "youtube.com" in target or "youtu.be" in target:
-        parsed_url = urlparse(target)
+    if "youtube.com" in target_clean or "youtu.be" in target_clean:
+        parsed_url = urlparse(target_clean)
         query_params = parse_qs(parsed_url.query)
         if "list" in query_params:
             playlist_id = query_params["list"][0]
         else:
-            print("❌ 오류: 올바른 재생목록 링크가 아닙니다.")
+            print(f"❌ 오류: '{target_clean}' 은(는) 올바른 재생목록 링크가 아닙니다.")
             return
 
-    elif target.startswith('@'):
-        handle = target
+    elif target_clean.startswith('@'):
+        handle = target_clean
 
-    elif target.startswith(("PL", "UU", "UUSH", "UULF", "FL", "RD")) and len(target) > 20:
-        playlist_id = target
+    elif target_clean.startswith(("PL", "UU", "UUSH", "UULF", "FL", "RD")) and len(target_clean) > 20:
+        playlist_id = target_clean
         
     else:
-        handle = f"@{target}"
+        handle = f"@{target_clean}"
 
-    limit_date = parse_yymmdd(args.D)
-    youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
     uploads_playlist_id = None
 
     if handle:
@@ -100,8 +84,6 @@ def main():
     video_ids = []
     next_page_token = None
     fetch_done = False
-
-    print(f"🔍 재생목록({uploads_playlist_id})에서 영상을 불러오는 중...")
 
     while not fetch_done:
         try:
@@ -139,7 +121,6 @@ def main():
     filtered_videos = []
     
     if TAGS and video_ids:
-        print("🔍 태그 기반 필터링 진행 중...")
         chunks = [video_ids[i:i+50] for i in range(0, len(video_ids), 50)]
         for chunk in chunks:
             try:
@@ -171,12 +152,12 @@ def main():
     print(f"✅ 총 {len(filtered_videos)}개의 유효한 영상을 찾았습니다.")
 
     if not filtered_videos:
-        print("실행할 영상이 없습니다. 작업을 종료합니다.")
+        print(f"⚠️ 실행할 영상이 없어 건너뜁니다.")
         return
 
     videos_json_str = json.dumps(filtered_videos)
     
-    target_name = args.target
+    target_name = target_clean
     if "list=" in target_name:
         match = re.search(r'list=([a-zA-Z0-9_-]+)', target_name)
         if match: 
@@ -194,17 +175,47 @@ def main():
     
     command.extend(["-o", safe_target_name]) 
     command.append(videos_json_str)
-
-    print("-" * 50)
-    print(f"🚀 {TARGET_SCRIPT} 실행 중...")
-    print("-" * 50)
     
     try:
         subprocess.run(command, check=True)
     except KeyboardInterrupt:
-        print("\n⚠️ 사용자에 의해 실행이 중단되었습니다.")
+        print("⚠️ 사용자에 의해 실행이 중단되었습니다.")
+        raise
     except subprocess.CalledProcessError as e:
-        print(f"\n❌ {TARGET_SCRIPT} 실행 중 오류가 발생했습니다. (Exit code: {e.returncode})")
+        print(f"❌ {TARGET_SCRIPT} 실행 중 오류가 발생했습니다. (Exit code: {e.returncode})")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="YouTube 채널 또는 재생목록 영상 일괄 쿼리 및 실행기")
+    
+    parser.add_argument("targets", nargs='+', help="채널 핸들(예: @KBSKpop), 재생목록 ID, 또는 전체 링크 (여러 개 입력 가능: 공백으로 구분)")
+    
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("-s", action="store_true", help="쇼츠(Shorts) 영상만 쿼리 (채널 핸들 입력 시에만 동작)")
+    group.add_argument("-l", action="store_true", help="일반(Long-form) 영상만 쿼리 (채널 핸들 입력 시에만 동작)")
+    
+    parser.add_argument("-D", metavar="yymmdd", help="해당 날짜 이후 업로드된 영상만 쿼리")
+    parser.add_argument("-d", metavar="yymmdd", help="main.py에 전달할 댓글 쿼리 날짜")
+
+    parser.add_argument("-S", "--single", action="store_true", help="main.py를 싱글 스레드 모드로 실행")
+    args = parser.parse_args()
+
+    if not YOUTUBE_API_KEY:
+        print("❌ 오류: YOUTUBE_API_KEY를 확인해주세요.")
+        return
+
+    limit_date = parse_yymmdd(args.D)
+    youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+
+    for target in args.targets:
+        try:
+            process_target(target, args, youtube, limit_date)
+        except KeyboardInterrupt:
+            print("🛑 전체 배치 작업이 취소되었습니다.")
+            break
+
+    print(f"==================================================")
+    print("✅ 모든 처리가 완료되었습니다.")
 
 if __name__ == "__main__":
     main()
