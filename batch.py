@@ -1,3 +1,4 @@
+import re
 import os
 import sys
 import json
@@ -175,11 +176,23 @@ def main():
 
     videos_json_str = json.dumps(filtered_videos)
     
+    target_name = args.target
+    if "list=" in target_name:
+        match = re.search(r'list=([a-zA-Z0-9_-]+)', target_name)
+        if match: 
+            target_name = match.group(1)
+    else:
+        target_name = target_name.split('/')[-1]
+
+    safe_target_name = re.sub(r'[\\/*?:"<>|]', "", target_name)
+
     command = ["python", TARGET_SCRIPT]
     if args.d:
         command.extend(["-d", args.d])
     if args.single:
-        command.append("-S")        
+        command.append("-S")
+    
+    command.extend(["-o", safe_target_name]) 
     command.append(videos_json_str)
 
     print("-" * 50)
