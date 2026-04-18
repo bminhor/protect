@@ -45,12 +45,10 @@ def wait_for_rate_limit():
         if len(request_times) >= RPM_LIMIT:
             oldest_time = request_times[0]
             elapsed = time.time() - oldest_time
-            
             if elapsed < 60:
                 sleep_time = 60 - elapsed + 1
-                print(f"⏳ 분당 요청 한도(RPM={RPM_LIMIT}) 초과. {sleep_time:.2f}초 대기 중...")
+                print(f"분당 요청 한도(RPM={RPM_LIMIT}) 초과. {sleep_time:.2f}초 대기 중...")
                 time.sleep(sleep_time)
-
         request_times.append(time.time())
         if len(request_times) > RPM_LIMIT:
             request_times.pop(0)
@@ -65,17 +63,14 @@ class BatchAnalysisResponse(BaseModel):
 def extract_video_id(url_or_id):
     if len(url_or_id) == 11 and re.match(r'^[0-9A-Za-z_-]{11}$', url_or_id):
         return url_or_id
-    
     match = re.search(r'(?:v=|\/|youtu\.be\/|embed\/)([0-9A-Za-z_-]{11})', url_or_id)
     if match:
         return match.group(1)
-    
     return None
 
 def get_all_youtube_comments(youtube_client, video_id, since_date=None):
     all_comments = []
     next_page_token = None
-
     while True:
         try:
             request = youtube_client.commentThreads().list(
@@ -86,9 +81,9 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
         except Exception as e:
             error_msg = str(e).lower()
             if "disabledcomments" in error_msg or "comments are disabled" in error_msg:
-                print(f"⚠️ 건너뜀: 댓글이 비활성화된 동영상입니다.")
+                print("건너뜀: 댓글이 비활성화된 동영상입니다.")
             else:
-                print(f"❌ YouTube API 오류: {e}")
+                print(f"YouTube API 오류: {e}")
             break
 
         for item in response.get("items", []):
@@ -118,7 +113,6 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
                         r_snippet = reply_item["snippet"]
                         r_id = reply_item["id"]
                         r_published_at = r_snippet["publishedAt"]
-                        
                         reply_dt = datetime.strptime(r_published_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
                         
                         if not since_date or reply_dt >= since_date:
@@ -131,7 +125,7 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
                                 "publishedAt": r_published_at,
                                 "id": r_id
                             })
-                except Exception as e:
+                except Exception:
                     pass
 
         next_page_token = response.get("nextPageToken")
@@ -143,11 +137,9 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
 def analyze_comments_batch(gemini_client, comments_batch):
     payload_for_gemini = [{"id": c["id"], "text": c["text"]} for c in comments_batch]
     prompt = f"{PROMPT}\n\n댓글 데이터:\n{json.dumps(payload_for_gemini, ensure_ascii=False)}"
-    
     retries = 0
     while True:
         wait_for_rate_limit()
-        
         try:
             response = gemini_client.models.generate_content(
                 model=MODEL,
@@ -159,24 +151,20 @@ def analyze_comments_batch(gemini_client, comments_batch):
                 )
             )
             if not response.text:
-                print("⚠️ 빈 응답 수신 (안전 필터링 차단 가능성)")
+                print("빈 응답 수신 (안전 필터링 차단 가능성)")
                 return []
-                
             return json.loads(response.text).get("results", [])
-            
         except json.JSONDecodeError:
-            print("⚠️ JSON 파싱 실패. 해당 배치를 건너뜁니다.")
+            print("JSON 파싱 실패. 해당 배치를 건너뜁니다.")
             return []
-            
         except Exception as e:
             error_msg = str(e)
-            
             if "RequestsPerDay" in error_msg.lower():
-                print(f"🚨 일일 요청 한도(RPD) 초과. 내일 다시 시도하거나, 다른 GEMINI_API_KEY를 사용하세요.")
+                print("일일 요청 한도(RPD) 초과. 내일 다시 시도하거나, 다른 GEMINI_API_KEY를 사용하세요.")
                 os._exit(1)
             else:
                 sleep_time = (2 ** retries) + random.uniform(1.0, 3.0)
-                print(f"⚠️ API 오류 발생. {sleep_time:.2f}초 대기 후 재시도... (재시도: {retries + 1})")
+                print(f"API 오류 발생. {sleep_time:.2f}초 대기 후 재시도... (재시도: {retries + 1})")
                 time.sleep(sleep_time)
                 retries += 1
 
@@ -198,7 +186,6 @@ def main():
     start_time = time.time()
     processed_video_count = 0
     grand_total_found = 0
-    
     all_comments_pool = []
     pending_videos = []
     found_harassment_comments = []
@@ -220,7 +207,7 @@ def main():
         if args.date:
             try:
                 since_date = datetime.strptime(args.date, "%y%m%d").replace(tzinfo=timezone.utc)
-                print(f"[{since_date.strftime('%Y-%m-%d')}] 이후에 작성된 댓글만 수집합니다.\n")
+                print(f"[{since_date.strftime('%Y-%m-%d')}] 이후에 작성된 댓글만 수집합니다.")
             except ValueError:
                 print("오류: 날짜 형식은 yymmdd 이어야 합니다. (예: 240416)")
                 return
@@ -248,7 +235,6 @@ def main():
 
         youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-
         completed_videos = load_completed_videos()
 
         for video_input in video_list:
@@ -256,7 +242,6 @@ def main():
             if not video_id:
                 print(f"건너뜀: 유효한 유튜브 비디오 링크나 ID가 아닙니다. ({video_input})")
                 continue
-
             if video_id in completed_videos:
                 print(f"건너뜀: 이미 분석이 완료된 영상입니다. ({video_id})")
                 continue
@@ -272,15 +257,15 @@ def main():
             pending_videos.append(video_id)
 
         if not all_comments_pool:
-            print("\n분석할 새로운 댓글이 없습니다. 작업을 종료합니다.")
+            print("분석할 새로운 댓글이 없습니다. 작업을 종료합니다.")
             return
 
         BATCH_SIZE = 50 
         batches = [all_comments_pool[i:i + BATCH_SIZE] for i in range(0, len(all_comments_pool), BATCH_SIZE)]
         total_batches = len(batches)
         
-        print(f"📦 총 {len(pending_videos)}개의 영상에서 {len(all_comments_pool)}개의 댓글을 수집했습니다.")
-        print(f"🚀 {BATCH_SIZE}개 단위로 묶어 총 {total_batches}번의 API 요청을 시작합니다...")
+        print(f"총 {len(pending_videos)}개의 영상에서 {len(all_comments_pool)}개의 댓글을 수집했습니다.")
+        print(f"{BATCH_SIZE}개 단위로 묶어 총 {total_batches}번의 API 요청을 시작합니다.")
 
         processed_batches = 0
 
@@ -302,14 +287,11 @@ def main():
                     
     except KeyboardInterrupt:
         is_interrupted = True
-        print("\n\n" + "🚨" * 25)
         print("사용자에 의해 실행이 강제 중단되었습니다 (Ctrl+C).")
-        print("🚨 지금까지 찾은 부적절한 댓글까지만 최대한 저장합니다.")
-        print("🚨" * 25 + "\n")
-        
+        print("지금까지 찾은 부적절한 댓글까지만 최대한 저장합니다.")
     except Exception as e:
         is_interrupted = True
-        print(f"\n\n❌ 예상치 못한 오류가 발생했습니다: {e}")
+        print(f"예상치 못한 오류가 발생했습니다: {e}")
 
     finally:
         if args.output_name:
@@ -336,13 +318,13 @@ def main():
                 
                 try:
                     df.to_csv(filename, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
-                    print(f"📁 통합 CSV 저장 완료: {filename} (적발 {grand_total_found}개)")
+                    print(f"통합 CSV 저장 완료: {filename} (적발 {grand_total_found}개)")
                 except PermissionError:
                     fallback_filename = f"output/{args.output_name}_alt_{int(time.time())}.csv"
                     df.to_csv(fallback_filename, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
-                    print(f"⚠️ 권한 오류로 대체 파일명 저장 완료: {fallback_filename}")
+                    print(f"권한 오류로 대체 파일명 저장 완료: {fallback_filename}")
                 except Exception as e:
-                    print(f"❌ 통합 CSV 저장 오류: {e}")
+                    print(f"통합 CSV 저장 오류: {e}")
                     
             if not is_interrupted:
                 for vid in pending_videos:
@@ -382,9 +364,9 @@ def main():
                     except PermissionError:
                         fallback_filename = f"output/{vid}_alt_{int(time.time())}.csv"
                         df.to_csv(fallback_filename, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
-                        print(f"[{vid}] {total_found}개 적발 -> ⚠️ {fallback_filename} 저장 완료")
+                        print(f"[{vid}] {total_found}개 적발 -> {fallback_filename} 저장 완료")
                     except Exception as e:
-                        print(f"[{vid}] ❌ CSV 저장 오류: {e}")
+                        print(f"[{vid}] CSV 저장 오류: {e}")
                 
                 if not is_interrupted:
                     mark_video_completed(vid)
@@ -394,10 +376,10 @@ def main():
         hours, rem = divmod(elapsed_time, 3600)
         minutes, seconds = divmod(rem, 60)
         
-        print("📊 [작업 종합 리포트]")
-        print(f"⏱️ 총 실행 시간: {int(hours)}시간 {int(minutes)}분 {seconds:.2f}초")
-        print(f"🎬 분석(시도)한 영상 수: {processed_video_count}개")
-        print(f"🚨 총 식별된 부적절한 댓글 수: {grand_total_found}개")
+        print("[작업 종합 리포트]")
+        print(f"총 실행 시간: {int(hours)}시간 {int(minutes)}분 {seconds:.2f}초")
+        print(f"분석(시도)한 영상 수: {processed_video_count}개")
+        print(f"총 식별된 부적절한 댓글 수: {grand_total_found}개")
 
 if __name__ == "__main__":
     main()
