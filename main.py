@@ -99,13 +99,13 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
             
             if not since_date or top_dt >= since_date:
                 all_comments.append({
-                    "id": top_id,
-                    "author": top_snippet["authorDisplayName"],
+                    "video_id": video_id,
                     "authorChannelId": top_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
+                    "author": top_snippet["authorDisplayName"],
                     "text": top_snippet["textDisplay"],
-                    "publishedAt": top_published_at,
                     "link": f"https://www.youtube.com/watch?v={video_id}&lc={top_id}",
-                    "video_id": video_id
+                    "publishedAt": top_published_at,
+                    "id": top_id
                 })
 
             if item["snippet"]["totalReplyCount"] > 0:
@@ -123,13 +123,13 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
                         
                         if not since_date or reply_dt >= since_date:
                             all_comments.append({
-                                "id": r_id,
-                                "author": r_snippet["authorDisplayName"],
+                                "video_id": video_id,
                                 "authorChannelId": r_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
+                                "author": r_snippet["authorDisplayName"],
                                 "text": r_snippet["textDisplay"],
-                                "publishedAt": r_published_at,
                                 "link": f"https://www.youtube.com/watch?v={video_id}&lc={r_id}",
-                                "video_id": video_id
+                                "publishedAt": r_published_at,
+                                "id": r_id
                             })
                 except Exception as e:
                     pass
@@ -186,12 +186,12 @@ def process_harassment_results(results, batch, found_comments_list):
             bad_comment = next((c for c in batch if c["id"] == result["comment_id"]), None)
             if bad_comment:
                 found_comments_list.append({
-                    "video_id": bad_comment["video_id"],
-                    "작성자": bad_comment["author"],
-                    "채널 ID": bad_comment["authorChannelId"],
+                    "영상 ID": bad_comment["video_id"],
+                    "작성자 ID": bad_comment["authorChannelId"],
+                    "작성자 핸들": bad_comment["author"],
                     "댓글 내용": bad_comment["text"],
-                    "댓글 게시 시간": bad_comment["publishedAt"],
-                    "댓글 링크": bad_comment["link"]
+                    "댓글 링크": bad_comment["link"],
+                    "댓글 게시 시간": bad_comment["publishedAt"]
                 })
 
 def main():
@@ -320,15 +320,15 @@ def main():
                 
                 formatted_comments = []
                 for c in found_harassment_comments:
-                    vid = c["video_id"]
+                    vid = c["영상 ID"]
                     formatted_comments.append({
+                        "매칭 태그": video_tags_map.get(vid, ""),
                         "영상 ID": vid,
-                        "작성자": c["작성자"],
-                        "채널 ID": c["채널 ID"],
+                        "작성자 ID": c["작성자 ID"],
+                        "작성자 핸들": c["작성자 핸들"],
                         "댓글 내용": c["댓글 내용"],
-                        "댓글 게시 시간": c["댓글 게시 시간"],
                         "댓글 링크": c["댓글 링크"],
-                        "매칭된 태그": video_tags_map.get(vid, "")
+                        "댓글 게시 시간": c["댓글 게시 시간"]
                     })
                     
                 df = pd.DataFrame(formatted_comments)
@@ -352,10 +352,17 @@ def main():
             results_by_video = {vid: [] for vid in pending_videos}
             
             for comment in found_harassment_comments:
-                vid = comment.get("video_id")
+                vid = comment.get("영상 ID")
                 if vid in results_by_video:
-                    clean_comment = {k: v for k, v in comment.items() if k != "video_id"}
-                    clean_comment["매칭된 태그"] = video_tags_map.get(vid, "")
+                    clean_comment = {
+                        "매칭 태그": video_tags_map.get(vid, ""),
+                        "영상 ID": vid,
+                        "작성자 ID": comment["작성자 ID"],
+                        "작성자 핸들": comment["작성자 핸들"],
+                        "댓글 내용": comment["댓글 내용"],
+                        "댓글 링크": comment["댓글 링크"],
+                        "댓글 게시 시간": comment["댓글 게시 시간"]
+                    }
                     results_by_video[vid].append(clean_comment)
 
             for vid in pending_videos:

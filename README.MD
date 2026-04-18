@@ -64,7 +64,7 @@ python batch.py @KBSKpop @MBCkpop PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ## Output
 
-| 영상 ID | @작성자 | 채널 ID | 댓글 내용 | 작성 시간 | 댓글 링크 (하이라이트) | 매칭 태그 |
+| 매칭 태그 | 영상 ID | 작성자 ID | 작성자 핸들 | 댓글 내용 | 댓글 링크 | 댓글 게시 시간 |
 | --- | --- | --- | --- | --- | --- | --- |
 
 위와 같은 형식으로 `/output/` 경로에 저장됩니다.
