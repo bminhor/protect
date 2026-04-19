@@ -1,5 +1,3 @@
 python-dotenv
 google-api-python-client
-pandas
 google-genai
-pydantic

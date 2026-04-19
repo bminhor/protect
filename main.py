@@ -6,13 +6,12 @@ import argparse
 import time
 import random
 import threading
-import pandas as pd
+import csv
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
@@ -28,6 +27,23 @@ MODEL_RPM_DICT = {
     "gemini-3-flash-preview": 5
 }
 RPM_LIMIT = MODEL_RPM_DICT.get(MODEL, 5)
+BATCH_ANALYSIS_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "results": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "comment_id": {"type": "STRING"},
+                    "is_sexual_harassment": {"type": "BOOLEAN"}
+                },
+                "required": ["comment_id", "is_sexual_harassment"]
+            }
+        }
+    },
+    "required": ["results"]
+}
 
 request_times = []
 rate_limit_lock = threading.Lock()
@@ -35,13 +51,6 @@ global_backoff_until = 0
 
 class FatalAPIError(Exception):
     pass
-
-class CommentAnalysis(BaseModel):
-    comment_id: str
-    is_sexual_harassment: bool
-
-class BatchAnalysisResponse(BaseModel):
-    results: list[CommentAnalysis]
 
 def wait_for_rate_limit():
     global global_backoff_until
@@ -254,7 +263,7 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
                 contents=prompt_with_data,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=BatchAnalysisResponse,
+                    response_schema=BATCH_ANALYSIS_SCHEMA,
                     temperature=0.0 
                 )
             )
@@ -452,10 +461,14 @@ def main():
             total_grand_found += total_found
 
             if found_harassment_comments:
-                df = pd.DataFrame(found_harassment_comments)
                 file_exists = os.path.isfile(csv_filename)
+                fieldnames = ["매칭 태그", "영상 ID", "작성자 ID", "작성자 핸들", "댓글 내용", "댓글 링크", "댓글 게시 시간"]
                 try:
-                    df.to_csv(csv_filename, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
+                    with open(csv_filename, mode='a', newline='', encoding='utf-8-sig') as f:
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                        if not file_exists:
+                            writer.writeheader()
+                        writer.writerows(found_harassment_comments)
                     print(f"{csv_filename} 저장 완료")
                 except Exception as e:
                     print(f"CSV 저장 오류: {e}")
