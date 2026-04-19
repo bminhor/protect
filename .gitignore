@@ -1,6 +1,4 @@
 /.venv/
 /.env
 /output/
-/output.csv
-/legacy/
-/log.txt
+/cache/

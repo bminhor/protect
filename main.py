@@ -28,7 +28,6 @@ MODEL_RPM_DICT = {
     "gemini-3-flash-preview": 5
 }
 RPM_LIMIT = MODEL_RPM_DICT.get(MODEL, 5)
-COMPLETED_LOG_FILE = "log.txt"
 
 request_times = []
 rate_limit_lock = threading.Lock()
@@ -42,16 +41,6 @@ class CommentAnalysis(BaseModel):
 
 class BatchAnalysisResponse(BaseModel):
     results: list[CommentAnalysis]
-
-def load_completed_videos():
-    if os.path.exists(COMPLETED_LOG_FILE):
-        with open(COMPLETED_LOG_FILE, "r", encoding="utf-8") as f:
-            return set(line.strip() for line in f if line.strip())
-    return set()
-
-def mark_video_completed(video_id):
-    with open(COMPLETED_LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"{video_id}\n")
 
 def wait_for_rate_limit():
     with rate_limit_lock:
@@ -285,6 +274,7 @@ def process_harassment_results(results, batch, found_comments_list):
             bad_comment = next((c for c in batch if c["id"] == result["comment_id"]), None)
             if bad_comment:
                 found_comments_list.append({
+                    "매칭 태그": bad_comment.get("video_tags", ""),
                     "영상 ID": bad_comment["video_id"],
                     "작성자 ID": bad_comment["authorChannelId"],
                     "작성자 핸들": bad_comment["author"],
@@ -292,6 +282,31 @@ def process_harassment_results(results, batch, found_comments_list):
                     "댓글 링크": bad_comment["link"],
                     "댓글 게시 시간": bad_comment["publishedAt"]
                 })
+
+def fetch_all_target_data(youtube, target, first_type, args, video_limit_date, comment_limit_date):
+    target_videos = []
+    video_tags_map = {}
+
+    if first_type == 'video':
+        target_videos.append({"id": target, "tags": ""})
+    else:
+        fetched = fetch_videos_from_target(youtube, target, first_type, args, video_limit_date)
+        target_videos.extend(fetched)
+
+    for v in target_videos:
+        video_tags_map[v["id"]] = v.get("tags", "")
+
+    fetched_comments = []
+    
+    for v in target_videos:
+        vid = v["id"]
+        comments = get_all_youtube_comments(youtube, vid, comment_limit_date)
+        for c in comments:
+            c["video_tags"] = video_tags_map.get(vid, "")
+            c["is_analyzed"] = False
+        fetched_comments.extend(comments)
+        
+    return fetched_comments
 
 def main():
     parser = argparse.ArgumentParser()
@@ -322,8 +337,8 @@ def main():
     
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    completed_videos = load_completed_videos()
 
+    os.makedirs('cache', exist_ok=True)
     os.makedirs('output', exist_ok=True)
 
     total_grand_found = 0
@@ -331,45 +346,63 @@ def main():
 
     for target in args.targets:
         print(f"[{target}] 작업 시작")
-        target_videos = []
-        video_tags_map = {}
-
-        if first_type == 'video':
-            target_videos.append({"id": target, "tags": ""})
-        else:
-            fetched = fetch_videos_from_target(youtube, target, first_type, args, video_limit_date)
-            target_videos.extend(fetched)
-
-        for v in target_videos:
-            video_tags_map[v["id"]] = v.get("tags", "")
-
+        
+        safe_target = re.sub(r'[\\/*?:"<>|]', "", target)
+        json_filename = f"cache/{safe_target}.json"
+        csv_filename = f"output/{safe_target}.csv"
+        
         all_comments_pool = []
-        pending_videos = []
+        
+        if os.path.exists(json_filename):
+            while True:
+                user_input = input(f"{json_filename} 파일이 발견되었습니다. 새로 수집하지 않고 이 파일의 데이터를 불러오시겠습니까? [Y/n]: ")
+                if user_input.lower() in ['y', '']:
+                    with open(json_filename, 'r', encoding='utf-8') as f:
+                        all_comments_pool = json.load(f)
+                    break
+                elif user_input.lower() == 'n':
+                    all_comments_pool = fetch_all_target_data(youtube, target, first_type, args, video_limit_date, comment_limit_date)
+                    with open(json_filename, 'w', encoding='utf-8') as f:
+                        json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
+                    break
+        else:
+            all_comments_pool = fetch_all_target_data(youtube, target, first_type, args, video_limit_date, comment_limit_date)
+            with open(json_filename, 'w', encoding='utf-8') as f:
+                json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
 
-        for v in target_videos:
-            vid = v["id"]
-            if vid in completed_videos:
-                print(f"건너뜀: 이미 분석이 완료된 영상입니다. ({vid})")
-                continue
-            
-            comments = get_all_youtube_comments(youtube, vid, comment_limit_date)
-            if not comments:
-                mark_video_completed(vid)
-                continue
+        has_analyzed_data = any(c.get("is_analyzed", False) for c in all_comments_pool)
+        pending_comments_pool = []
+        
+        if has_analyzed_data:
+            while True:
+                use_log_input = input("기존 분석을 이어서 진행하시겠습니까? (전체 재분석을 원하시면 n 입력) [Y/n]: ")
+                if use_log_input.lower() in ['y', '']:
+                    pending_comments_pool = [c for c in all_comments_pool if not c.get("is_analyzed", False)]
+                    break
+                elif use_log_input.lower() == 'n':
+                    for c in all_comments_pool:
+                        c["is_analyzed"] = False
+                    pending_comments_pool = all_comments_pool
+                    break
+        else:
+            pending_comments_pool = all_comments_pool
 
-            all_comments_pool.extend(comments)
-            pending_videos.append(vid)
-
-        if not all_comments_pool:
+        if not pending_comments_pool:
             print("분석할 새로운 댓글이 없습니다.")
+            try:
+                with open(json_filename, 'w', encoding='utf-8') as f:
+                    json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"JSON 저장 오류: {e}")
             continue
 
         BATCH_SIZE = 50 
-        batches = [all_comments_pool[i:i + BATCH_SIZE] for i in range(0, len(all_comments_pool), BATCH_SIZE)]
+        batches = [pending_comments_pool[i:i + BATCH_SIZE] for i in range(0, len(pending_comments_pool), BATCH_SIZE)]
         total_batches = len(batches)
-        
-        print(f"총 {len(pending_videos)}개의 영상에서 {len(all_comments_pool)}개의 댓글을 수집했습니다.")
-        print(f"{BATCH_SIZE}개 단위로 묶어 API 요청을 시작합니다.")
+        unique_videos = set(c["video_id"] for c in pending_comments_pool)
+
+        print(f"총 {len(unique_videos)}개의 영상에서 {len(pending_comments_pool)}개의 댓글을 수집했습니다.")
+        print(f"{BATCH_SIZE}개 단위로 묶어 총 {total_batches}번의 API 요청을 시작합니다.")
 
         found_harassment_comments = []
         processed_batches = 0
@@ -384,6 +417,11 @@ def main():
                     try:
                         results = future.result()
                         process_harassment_results(results, batch, found_harassment_comments)
+                        
+                        if not stop_event.is_set():
+                            for c in batch:
+                                c["is_analyzed"] = True
+                                
                         processed_batches += 1
                         print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료")
                     except FatalAPIError as e:
@@ -395,48 +433,35 @@ def main():
         except Exception as e:
             print(f"예상치 못한 오류가 발생했습니다: {e}")
 
-        total_found = len(found_harassment_comments)
-        total_grand_found += total_found
+        finally:
+            total_found = len(found_harassment_comments)
+            total_grand_found += total_found
 
-        if total_found > 0:
-            safe_target = re.sub(r'[\\/*?:"<>|]', "", target)
-            filename = f"output/{safe_target}.csv"
-            
-            formatted_comments = []
-            for c in found_harassment_comments:
-                vid = c["영상 ID"]
-                formatted_comments.append({
-                    "매칭 태그": video_tags_map.get(vid, ""),
-                    "영상 ID": vid,
-                    "작성자 ID": c["작성자 ID"],
-                    "작성자 핸들": c["작성자 핸들"],
-                    "댓글 내용": c["댓글 내용"],
-                    "댓글 링크": c["댓글 링크"],
-                    "댓글 게시 시간": c["댓글 게시 시간"]
-                })
-                
-            df = pd.DataFrame(formatted_comments)
-            file_exists = os.path.isfile(filename)
-            
+            if found_harassment_comments:
+                df = pd.DataFrame(found_harassment_comments)
+                file_exists = os.path.isfile(csv_filename)
+                try:
+                    df.to_csv(csv_filename, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
+                    print(f"{csv_filename} 저장 완료")
+                except Exception as e:
+                    print(f"CSV 저장 오류: {e}")
+
             try:
-                df.to_csv(filename, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
-                print(f"{filename} 저장 완료 (적발 {total_found}개)")
+                with open(json_filename, 'w', encoding='utf-8') as f:
+                    json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
+                print(f"{json_filename} 업데이트 완료.")
             except Exception as e:
-                print(f"CSV 저장 오류: {e}")
+                print(f"JSON 저장 오류: {e}")
 
-        if not fatal_error_occurred:
-            for vid in pending_videos:
-                mark_video_completed(vid)
-        else:
-            print("작업이 중간에 중단되어 완료 리스트(log.txt)에 기록하지 않습니다. (재실행 시 이어서 작업 가능)")
-            sys.exit(1)
+            if fatal_error_occurred:
+                print("작업이 중간에 중단되었습니다. 다음 실행 시 이어서 작업할 수 있습니다.")
+                sys.exit(1)
 
     end_time = time.time()
     elapsed_time = end_time - start_time
     hours, rem = divmod(elapsed_time, 3600)
     minutes, seconds = divmod(rem, 60)
     
-    print("[작업 종합 리포트]")
     print(f"총 실행 시간: {int(hours)}시간 {int(minutes)}분 {seconds:.2f}초")
     print(f"총 식별된 부적절한 댓글 수: {total_grand_found}개")
 
