@@ -241,7 +241,7 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
 def analyze_comments_batch(gemini_client, comments_batch):
     payload_for_gemini = [{"id": c["id"], "text": c["text"]} for c in comments_batch]
     prompt_with_data = f"{PROMPT} 댓글 데이터: {json.dumps(payload_for_gemini, ensure_ascii=False)}"
-    retries = 0
+    tries = 1
     while True:
         wait_for_rate_limit()
         try:
@@ -263,14 +263,18 @@ def analyze_comments_batch(gemini_client, comments_batch):
             return []
         except Exception as e:
             error_msg = str(e)
-            if "RequestsPerDay" in error_msg.lower():
+            print(error_msg)
+            if "RequestsPerDay" in error_msg:
                 print("일일 요청 한도 초과")
                 os._exit(1)
+            elif tries == 5:
+                print("API 오류 지속")
+                os._exit(1)
             else:
-                sleep_time = (2 ** retries) + random.uniform(1.0, 3.0)
+                sleep_time = (2 ** tries) + random.uniform(2.0, 6.0)
                 print(f"API 오류 발생. {sleep_time:.2f}초 대기 후 재시도...")
                 time.sleep(sleep_time)
-                retries += 1
+                tries += 1
 
 def process_harassment_results(results, batch, found_comments_list):
     for result in results:
