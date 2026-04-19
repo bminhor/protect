@@ -31,6 +31,7 @@ RPM_LIMIT = MODEL_RPM_DICT.get(MODEL, 5)
 
 request_times = []
 rate_limit_lock = threading.Lock()
+global_backoff_until = 0
 
 class FatalAPIError(Exception):
     pass
@@ -43,14 +44,22 @@ class BatchAnalysisResponse(BaseModel):
     results: list[CommentAnalysis]
 
 def wait_for_rate_limit():
+    global global_backoff_until
     with rate_limit_lock:
+        now = time.time()
+        if now < global_backoff_until:
+            sleep_time = global_backoff_until - now
+            time.sleep(sleep_time)
+            now = time.time()
+
         if len(request_times) >= RPM_LIMIT:
             oldest_time = request_times[0]
-            elapsed = time.time() - oldest_time
+            elapsed = now - oldest_time
             if elapsed < 60:
                 sleep_time = 60 - elapsed + 1
-                print(f"분당 요청 한도 초과. {sleep_time:.2f}초 대기 중...")
+                print(f"분당 요청 한도 도달. {sleep_time:.2f}초 대기 중...")
                 time.sleep(sleep_time)
+        
         request_times.append(time.time())
         if len(request_times) > RPM_LIMIT:
             request_times.pop(0)
@@ -231,6 +240,7 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
     return all_comments
 
 def analyze_comments_batch(gemini_client, comments_batch, stop_event):
+    global global_backoff_until
     if stop_event.is_set():
         return []
     payload_for_gemini = [{"id": c["id"], "text": c["text"]} for c in comments_batch]
@@ -264,7 +274,11 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
                 raise FatalAPIError("API 오류 지속")
             else:
                 sleep_time = (2 ** tries) + random.uniform(2.0, 6.0)
-                print(f"API 오류 발생. {sleep_time:.2f}초 대기 후 재시도...")
+                print(f"API 오류 발생. 전체 스레드 {sleep_time:.2f}초 대기 후 재시도...")
+                with rate_limit_lock:
+                    new_backoff = time.time() + sleep_time
+                    if new_backoff > global_backoff_until:
+                        global_backoff_until = new_backoff
                 time.sleep(sleep_time)
                 tries += 1
 
