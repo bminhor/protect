@@ -294,7 +294,6 @@ def main():
     group.add_argument("-l", action="store_true")
     parser.add_argument("-D", metavar="yymmdd")
     parser.add_argument("-d", metavar="yymmdd")
-    parser.add_argument("-S", "--single", action="store_true")
     args = parser.parse_args()
 
     if not YOUTUBE_API_KEY or not GEMINI_API_KEY:
@@ -325,7 +324,6 @@ def main():
 
     for target in args.targets:
         print(f"[{target}] 작업 시작")
-        is_interrupted = False
         target_videos = []
         video_tags_map = {}
 
@@ -370,26 +368,15 @@ def main():
         processed_batches = 0
 
         try:
-            if args.single:
-                for batch in batches:
-                    results = analyze_comments_batch(gemini_client, batch)
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_batch = {executor.submit(analyze_comments_batch, gemini_client, batch): batch for batch in batches}
+                for future in as_completed(future_to_batch):
+                    batch = future_to_batch[future]
+                    results = future.result()
                     process_harassment_results(results, batch, found_harassment_comments)
                     processed_batches += 1
                     print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료")
-            else:
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_batch = {executor.submit(analyze_comments_batch, gemini_client, batch): batch for batch in batches}
-                    for future in as_completed(future_to_batch):
-                        batch = future_to_batch[future]
-                        results = future.result()
-                        process_harassment_results(results, batch, found_harassment_comments)
-                        processed_batches += 1
-                        print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료")
-        except KeyboardInterrupt:
-            is_interrupted = True
-            print("사용자에 의해 실행이 중단되었습니다.")
         except Exception as e:
-            is_interrupted = True
             print(f"예상치 못한 오류가 발생했습니다: {e}")
 
         total_found = len(found_harassment_comments)
@@ -421,11 +408,8 @@ def main():
             except Exception as e:
                 print(f"CSV 저장 오류: {e}")
 
-        if not is_interrupted:
-            for vid in pending_videos:
-                mark_video_completed(vid)
-        else:
-            break
+        for vid in pending_videos:
+            mark_video_completed(vid)
 
     end_time = time.time()
     elapsed_time = end_time - start_time
