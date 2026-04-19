@@ -33,6 +33,9 @@ COMPLETED_LOG_FILE = "log.txt"
 request_times = []
 rate_limit_lock = threading.Lock()
 
+class FatalAPIError(Exception):
+    pass
+
 class CommentAnalysis(BaseModel):
     comment_id: str
     is_sexual_harassment: bool
@@ -238,7 +241,9 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
 
     return all_comments
 
-def analyze_comments_batch(gemini_client, comments_batch):
+def analyze_comments_batch(gemini_client, comments_batch, stop_event):
+    if stop_event.is_set():
+        return []
     payload_for_gemini = [{"id": c["id"], "text": c["text"]} for c in comments_batch]
     prompt_with_data = f"{PROMPT} 댓글 데이터: {json.dumps(payload_for_gemini, ensure_ascii=False)}"
     tries = 1
@@ -265,11 +270,9 @@ def analyze_comments_batch(gemini_client, comments_batch):
             error_msg = str(e)
             print(error_msg)
             if "RequestsPerDay" in error_msg:
-                print("일일 요청 한도 초과")
-                os._exit(1)
+                raise FatalAPIError("일일 요청 한도 초과")
             elif tries == 5:
-                print("API 오류 지속")
-                os._exit(1)
+                raise FatalAPIError("API 오류 지속")
             else:
                 sleep_time = (2 ** tries) + random.uniform(2.0, 6.0)
                 print(f"API 오류 발생. {sleep_time:.2f}초 대기 후 재시도...")
@@ -370,16 +373,25 @@ def main():
 
         found_harassment_comments = []
         processed_batches = 0
-
+        stop_event = threading.Event()
+        fatal_error_occurred = False
+        
         try:
             with ThreadPoolExecutor(max_workers=5) as executor:
-                future_to_batch = {executor.submit(analyze_comments_batch, gemini_client, batch): batch for batch in batches}
+                future_to_batch = {executor.submit(analyze_comments_batch, gemini_client, batch, stop_event): batch for batch in batches}
                 for future in as_completed(future_to_batch):
                     batch = future_to_batch[future]
-                    results = future.result()
-                    process_harassment_results(results, batch, found_harassment_comments)
-                    processed_batches += 1
-                    print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료")
+                    try:
+                        results = future.result()
+                        process_harassment_results(results, batch, found_harassment_comments)
+                        processed_batches += 1
+                        print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료")
+                    except FatalAPIError as e:
+                        print(f"[작업 중단] {e}")
+                        print("현재까지 분석된 데이터를 저장하고 안전하게 종료합니다.")
+                        stop_event.set()
+                        fatal_error_occurred = True
+                        break
         except Exception as e:
             print(f"예상치 못한 오류가 발생했습니다: {e}")
 
@@ -412,8 +424,12 @@ def main():
             except Exception as e:
                 print(f"CSV 저장 오류: {e}")
 
-        for vid in pending_videos:
-            mark_video_completed(vid)
+        if not fatal_error_occurred:
+            for vid in pending_videos:
+                mark_video_completed(vid)
+        else:
+            print("작업이 중간에 중단되어 완료 리스트(log.txt)에 기록하지 않습니다. (재실행 시 이어서 작업 가능)")
+            sys.exit(1)
 
     end_time = time.time()
     elapsed_time = end_time - start_time
