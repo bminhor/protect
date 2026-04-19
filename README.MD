@@ -15,51 +15,39 @@ pip install -r requirements.txt
 
 ## Usage
 
-### 1. 단일 또는 다중 영상 분석 (main.py)
+### 1. 영상 분석
 
 ```bash
-# 단일 영상 분석 (영상 ID 또는 영상 URL)
-python main.py dQw4w9WgXcQ
-
-# 다중 영상 분석
+# 영상 분석 (영상 ID, 띄어쓰기로 구분)
 python main.py dQw4w9WgXcQ abcdefg1234
 
-# 특정 날짜(YYMMDD) 이후 작성된 댓글만 분석
+# 특정 날짜(YYMMDD) 이후 작성된 댓글 분석
 python main.py dQw4w9WgXcQ -d 260416
-
-# 싱글 스레드 모드로 실행 (503 에러 방지)
-python main.py dQw4w9WgXcQ -S
 ```
 
-### 2. 채널 또는 재생목록 분석 (batch.py)
+### 2. 재생목록 또는 채널의 모든 영상 분석
 
 ```bash
-# 채널의 전체 영상 분석 (powershell에서는 @없이)
-python batch.py @KBSKpop
+# 재생목록의 모든 영상 분석 (재생목록 ID, 띄어쓰기로 구분)
+python main.py PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-# 채널의 쇼츠 영상만 분석
-python batch.py @KBSKpop -s
+# 채널의 모든 영상 분석 (채널 핸들, 띄어쓰기로 구분)
+python main.py @KBSKpop @MBCkpop
 
-# 채널의 롱폼 영상만 분석
-python batch.py @KBSKpop -l
+# 채널의 모든 쇼츠 영상 분석
+python main.py @KBSKpop -s
 
-# 특정 날짜(YYMMDD) 이후 업로드 된 영상만 분석
-python batch.py @KBSKpop -D 260101
+# 채널의 모든 롱폼 영상 분석
+python main.py @KBSKpop -l
 
-# 특정 날짜(YYMMDD) 이후 작성된 댓글만 분석
-python batch.py @KBSKpop -d 260416
+# 특정 날짜(YYMMDD) 이후 업로드 된 영상 분석
+python main.py @KBSKpop -D 260101
 
-# 싱글 스레드 모드로 실행 (503 에러 방지)
-python batch.py @KBSKpop -S
+# 특정 날짜(YYMMDD) 이후 작성된 댓글 분석
+python main.py @KBSKpop -d 260416
 
 # 복합 사용
-python batch.py @KBSKpop -D 260101 -d 260416 -s -S
-
-# 재생목록의 전체 영상 분석 (재생목록 ID 또는 재생목록 URL)
-python batch.py PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-
-# 다중 채널 및 다중 재생목록의 전체 영상 분석
-python batch.py @KBSKpop @MBCkpop PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+python main.py @KBSKpop @MBCkpop -D 260101 -d 260416 -s
 ```
 
 ## Output
