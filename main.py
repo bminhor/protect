@@ -6,7 +6,7 @@ import argparse
 import time
 import random
 import threading
-import pandas as pd
+import csv
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
@@ -457,10 +457,14 @@ def main():
             total_grand_found += total_found
 
             if found_harassment_comments:
-                df = pd.DataFrame(found_harassment_comments)
                 file_exists = os.path.isfile(csv_filename)
+                fieldnames = ["매칭 태그", "영상 ID", "작성자 ID", "작성자 핸들", "댓글 내용", "댓글 링크", "댓글 게시 시간"]
                 try:
-                    df.to_csv(csv_filename, mode='a', index=False, header=not file_exists, encoding='utf-8-sig')
+                    with open(csv_filename, mode='a', newline='', encoding='utf-8-sig') as f:
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                        if not file_exists:
+                            writer.writeheader()
+                        writer.writerows(found_harassment_comments)
                     print(f"{csv_filename} 저장 완료")
                 except Exception as e:
                     print(f"CSV 저장 오류: {e}")
