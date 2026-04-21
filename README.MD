@@ -1,4 +1,5 @@
 ## Installation
+
 ```bash
 git clone https://github.com/bminhor/protect.git
 cd protect
@@ -52,7 +53,7 @@ python main.py @KBSKpop @MBCkpop -D 260101 -d 260416 -s
 
 ## Output
 
-| 매칭 태그 | 영상 ID | 작성자 ID | 작성자 핸들 | 댓글 내용 | 댓글 링크 | 댓글 게시 시간 |
-| --- | --- | --- | --- | --- | --- | --- |
+| 구분 | 내용 | 작성자 핸들 | 작성자 ID | 작성 날짜 | 댓글 링크 | 영상 ID | 댓글 ID | 매칭 태그 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
 
 위와 같은 형식으로 `/output/` 경로에 저장됩니다.

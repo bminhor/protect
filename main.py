@@ -21,6 +21,7 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MODEL = os.getenv("MODEL")
 PROMPT = os.getenv("PROMPT")
+FORMAT = os.getenv("FORMAT", "csv").lower()
 TAGS_ENV = os.getenv("TAGS", "")
 TAGS = [t.strip() for t in TAGS_ENV.split(",")] if TAGS_ENV.strip() else []
 MODEL_RPM_DICT = {
@@ -28,6 +29,7 @@ MODEL_RPM_DICT = {
     "gemini-3-flash-preview": 5
 }
 RPM_LIMIT = MODEL_RPM_DICT.get(MODEL, 5)
+FIELDNAMES = ["구분", "내용", "작성자 핸들", "작성자 ID", "작성 날짜", "댓글 링크", "영상 ID", "댓글 ID", "매칭 태그"]
 
 request_times = []
 rate_limit_lock = threading.Lock()
@@ -201,13 +203,14 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
             
             if not since_date or top_dt >= since_date:
                 all_comments.append({
-                    "video_id": video_id,
-                    "authorChannelId": top_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
-                    "author": top_snippet["authorDisplayName"],
-                    "text": top_snippet["textDisplay"],
-                    "link": f"https://www.youtube.com/watch?v={video_id}&lc={top_id}",
-                    "publishedAt": top_published_at,
-                    "id": top_id
+                    "구분": None,
+                    "내용": top_snippet["textDisplay"],
+                    "작성자 핸들": top_snippet["authorDisplayName"],
+                    "작성자 ID": top_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
+                    "작성 날짜": top_published_at,
+                    "댓글 링크": f"https://www.youtube.com/watch?v={video_id}&lc={top_id}",
+                    "영상 ID": video_id,
+                    "댓글 ID": top_id
                 })
 
             if item["snippet"]["totalReplyCount"] > 0:
@@ -224,13 +227,14 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
                         
                         if not since_date or reply_dt >= since_date:
                             all_comments.append({
-                                "video_id": video_id,
-                                "authorChannelId": r_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
-                                "author": r_snippet["authorDisplayName"],
-                                "text": r_snippet["textDisplay"],
-                                "link": f"https://www.youtube.com/watch?v={video_id}&lc={r_id}",
-                                "publishedAt": r_published_at,
-                                "id": r_id
+                                "구분": None,
+                                "내용": r_snippet["textDisplay"],
+                                "작성자 핸들": r_snippet["authorDisplayName"],
+                                "작성자 ID": r_snippet.get("authorChannelId", {}).get("value", "알 수 없음"),
+                                "작성 날짜": r_published_at,
+                                "댓글 링크": f"https://www.youtube.com/watch?v={video_id}&lc={r_id}",
+                                "영상 ID": video_id,
+                                "댓글 ID": r_id
                             })
                 except Exception:
                     pass
@@ -241,11 +245,35 @@ def get_all_youtube_comments(youtube_client, video_id, since_date=None):
 
     return all_comments
 
+def fetch_all_target_data(youtube, target, first_type, args, video_limit_date, comment_limit_date):
+    target_videos = []
+    video_tags_map = {}
+
+    if first_type == 'video':
+        target_videos.append({"id": target, "tags": ""})
+    else:
+        fetched = fetch_videos_from_target(youtube, target, first_type, args, video_limit_date)
+        target_videos.extend(fetched)
+
+    for v in target_videos:
+        video_tags_map[v["id"]] = v.get("tags", "")
+
+    fetched_comments = []
+    
+    for v in target_videos:
+        vid = v["id"]
+        comments = get_all_youtube_comments(youtube, vid, comment_limit_date)
+        for c in comments:
+            c["매칭 태그"] = video_tags_map.get(vid, "")
+        fetched_comments.extend(comments)
+            
+    return fetched_comments
+
 def analyze_comments_batch(gemini_client, comments_batch, stop_event):
     global global_backoff_until
     if stop_event.is_set():
         return []
-    payload_for_gemini = [{"id": c["id"], "text": c["text"]} for c in comments_batch]
+    payload_for_gemini = [{"id": c["댓글 ID"], "text": c["내용"]} for c in comments_batch]
     prompt_with_data = f"{PROMPT} 댓글 데이터: {json.dumps(payload_for_gemini, ensure_ascii=False)}"
     tries = 1
     while True:
@@ -295,45 +323,46 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
                     return [] 
                 tries += 1
 
-def process_harassment_results(results, batch, found_comments_list):
+def process_harassment_results(results, batch):
+    found_count = 0
     for result in results:
-        if result.get("is_sexual_harassment"):
-            bad_comment = next((c for c in batch if c["id"] == result["comment_id"]), None)
-            if bad_comment:
-                found_comments_list.append({
-                    "매칭 태그": bad_comment.get("video_tags", ""),
-                    "영상 ID": bad_comment["video_id"],
-                    "작성자 ID": bad_comment["authorChannelId"],
-                    "작성자 핸들": bad_comment["author"],
-                    "댓글 내용": bad_comment["text"],
-                    "댓글 링크": bad_comment["link"],
-                    "댓글 게시 시간": bad_comment["publishedAt"]
-                })
+        target_comment = next((c for c in batch if c["댓글 ID"] == result.get("comment_id")), None)
+        if target_comment:
+            is_harassment = result.get("is_sexual_harassment", False)
+            target_comment["구분"] = is_harassment
+            if is_harassment:
+                found_count += 1
+    return found_count
 
-def fetch_all_target_data(youtube, target, first_type, args, video_limit_date, comment_limit_date):
-    target_videos = []
-    video_tags_map = {}
+def parse_csv_value(val):
+    if val == "" or val is None:
+        return None
+    if str(val).lower() == "true": return True
+    if str(val).lower() == "false": return False
+    return val
 
-    if first_type == 'video':
-        target_videos.append({"id": target, "tags": ""})
+def load_data(filepath, fmt):
+    if fmt == "json":
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
     else:
-        fetched = fetch_videos_from_target(youtube, target, first_type, args, video_limit_date)
-        target_videos.extend(fetched)
+        with open(filepath, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            data = []
+            for row in reader:
+                row["구분"] = parse_csv_value(row.get("구분"))
+                data.append(row)
+            return data
 
-    for v in target_videos:
-        video_tags_map[v["id"]] = v.get("tags", "")
-
-    fetched_comments = []
-    
-    for v in target_videos:
-        vid = v["id"]
-        comments = get_all_youtube_comments(youtube, vid, comment_limit_date)
-        for c in comments:
-            c["video_tags"] = video_tags_map.get(vid, "")
-            c["is_analyzed"] = False
-        fetched_comments.extend(comments)
-        
-    return fetched_comments
+def save_data(filepath, fmt, data):
+    if fmt == "json":
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    else:
+        with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
+            writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+            writer.writeheader()
+            writer.writerows(data)
 
 def main():
     parser = argparse.ArgumentParser()
@@ -365,7 +394,6 @@ def main():
     youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
-    os.makedirs('cache', exist_ok=True)
     os.makedirs('output', exist_ok=True)
 
     total_grand_found = 0
@@ -375,40 +403,36 @@ def main():
         print(f"[{target}] 작업 시작")
         
         safe_target = re.sub(r'[\\/*?:"<>|]', "", target)
-        json_filename = f"cache/{safe_target}.json"
-        csv_filename = f"output/{safe_target}.csv"
+        output_filename = f"output/{safe_target}.{FORMAT}"
         
         all_comments_pool = []
         
-        if os.path.exists(json_filename):
+        if os.path.exists(output_filename):
             while True:
-                user_input = input(f"{json_filename} 파일이 발견되었습니다. 새로 수집하지 않고 이 파일의 데이터를 불러오시겠습니까? [Y/n]: ")
+                user_input = input(f"{output_filename} 파일이 발견되었습니다. 새로 수집하지 않고 이 파일의 데이터를 불러오시겠습니까? [Y/n]: ")
                 if user_input.lower() in ['y', '']:
-                    with open(json_filename, 'r', encoding='utf-8') as f:
-                        all_comments_pool = json.load(f)
+                    all_comments_pool = load_data(output_filename, FORMAT)
                     break
                 elif user_input.lower() == 'n':
                     all_comments_pool = fetch_all_target_data(youtube, target, first_type, args, video_limit_date, comment_limit_date)
-                    with open(json_filename, 'w', encoding='utf-8') as f:
-                        json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
+                    save_data(output_filename, FORMAT, all_comments_pool)
                     break
         else:
             all_comments_pool = fetch_all_target_data(youtube, target, first_type, args, video_limit_date, comment_limit_date)
-            with open(json_filename, 'w', encoding='utf-8') as f:
-                json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
+            save_data(output_filename, FORMAT, all_comments_pool)
 
-        has_analyzed_data = any(c.get("is_analyzed", False) for c in all_comments_pool)
+        has_analyzed_data = any(c.get("구분") is not None for c in all_comments_pool)
         pending_comments_pool = []
         
         if has_analyzed_data:
             while True:
                 use_log_input = input("기존 분석을 이어서 진행하시겠습니까? (전체 재분석을 원하시면 n 입력) [Y/n]: ")
                 if use_log_input.lower() in ['y', '']:
-                    pending_comments_pool = [c for c in all_comments_pool if not c.get("is_analyzed", False)]
+                    pending_comments_pool = [c for c in all_comments_pool if c.get("구분") is None]
                     break
                 elif use_log_input.lower() == 'n':
                     for c in all_comments_pool:
-                        c["is_analyzed"] = False
+                        c["구분"] = None
                     pending_comments_pool = all_comments_pool
                     break
         else:
@@ -417,21 +441,22 @@ def main():
         if not pending_comments_pool:
             print("분석할 새로운 댓글이 없습니다.")
             try:
-                with open(json_filename, 'w', encoding='utf-8') as f:
-                    json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
+                save_data(output_filename, FORMAT, all_comments_pool)
             except Exception as e:
-                print(f"JSON 저장 오류: {e}")
+                print(f"파일 저장 오류: {e}")
+            
+            total_grand_found += sum(1 for c in all_comments_pool if c.get("구분") is True)
             continue
 
         BATCH_SIZE = 50 
         batches = [pending_comments_pool[i:i + BATCH_SIZE] for i in range(0, len(pending_comments_pool), BATCH_SIZE)]
         total_batches = len(batches)
-        unique_videos = set(c["video_id"] for c in pending_comments_pool)
+        unique_videos = set(c["영상 ID"] for c in pending_comments_pool)
 
         print(f"총 {len(unique_videos)}개의 영상에서 {len(pending_comments_pool)}개의 댓글을 수집했습니다.")
         print(f"{BATCH_SIZE}개 단위로 묶어 총 {total_batches}번의 API 요청을 시작합니다.")
 
-        found_harassment_comments = []
+        target_found_count = 0
         processed_batches = 0
         stop_event = threading.Event()
         fatal_error_occurred = False
@@ -443,12 +468,9 @@ def main():
                     batch = future_to_batch[future]
                     try:
                         results = future.result()
-                        process_harassment_results(results, batch, found_harassment_comments)
+                        found_in_batch = process_harassment_results(results, batch)
+                        target_found_count += found_in_batch
                         
-                        if not stop_event.is_set():
-                            for c in batch:
-                                c["is_analyzed"] = True
-                                
                         processed_batches += 1
                         print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료")
                     except FatalAPIError as e:
@@ -461,28 +483,14 @@ def main():
             print(f"예상치 못한 오류가 발생했습니다: {e}")
 
         finally:
-            total_found = len(found_harassment_comments)
-            total_grand_found += total_found
-
-            if found_harassment_comments:
-                file_exists = os.path.isfile(csv_filename)
-                fieldnames = ["매칭 태그", "영상 ID", "작성자 ID", "작성자 핸들", "댓글 내용", "댓글 링크", "댓글 게시 시간"]
-                try:
-                    with open(csv_filename, mode='a', newline='', encoding='utf-8-sig') as f:
-                        writer = csv.DictWriter(f, fieldnames=fieldnames)
-                        if not file_exists:
-                            writer.writeheader()
-                        writer.writerows(found_harassment_comments)
-                    print(f"{csv_filename} 저장 완료")
-                except Exception as e:
-                    print(f"CSV 저장 오류: {e}")
+            target_total_found = sum(1 for c in all_comments_pool if c.get("구분") is True)
+            total_grand_found += target_total_found
 
             try:
-                with open(json_filename, 'w', encoding='utf-8') as f:
-                    json.dump(all_comments_pool, f, ensure_ascii=False, indent=2)
-                print(f"{json_filename} 업데이트 완료.")
+                save_data(output_filename, FORMAT, all_comments_pool)
+                print(f"{output_filename} 통합 파일 업데이트 완료.")
             except Exception as e:
-                print(f"JSON 저장 오류: {e}")
+                print(f"데이터 파일 저장 오류: {e}")
 
             if fatal_error_occurred:
                 print("작업이 중간에 중단되었습니다. 다음 실행 시 이어서 작업할 수 있습니다.")
