@@ -43,13 +43,14 @@ class CommentAnalysis(BaseModel):
 class BatchAnalysisResponse(BaseModel):
     results: list[CommentAnalysis]
 
-def wait_for_rate_limit():
+def wait_for_rate_limit(stop_event):
     global global_backoff_until
     with rate_limit_lock:
         now = time.time()
         if now < global_backoff_until:
             sleep_time = global_backoff_until - now
-            time.sleep(sleep_time)
+            if stop_event.wait(sleep_time): 
+                return
             now = time.time()
 
         if len(request_times) >= RPM_LIMIT:
@@ -58,7 +59,8 @@ def wait_for_rate_limit():
             if elapsed < 60:
                 sleep_time = 60 - elapsed + 1
                 print(f"분당 요청 한도 도달. {sleep_time:.2f}초 대기 중...")
-                time.sleep(sleep_time)
+                if stop_event.wait(sleep_time):
+                    return
         
         request_times.append(time.time())
         if len(request_times) > RPM_LIMIT:
@@ -247,7 +249,9 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
     prompt_with_data = f"{PROMPT} 댓글 데이터: {json.dumps(payload_for_gemini, ensure_ascii=False)}"
     tries = 1
     while True:
-        wait_for_rate_limit()
+        if stop_event.is_set(): return [] 
+        wait_for_rate_limit(stop_event)
+        if stop_event.is_set(): return []
         try:
             response = gemini_client.models.generate_content(
                 model=MODEL,
@@ -278,8 +282,9 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
                 with rate_limit_lock:
                     new_backoff = time.time() + sleep_time
                     if new_backoff > global_backoff_until:
-                        global_backoff_until = new_backoff
-                time.sleep(sleep_time)
+                        global_backoff_until = new_backoff                
+                if stop_event.wait(sleep_time):
+                    return [] 
                 tries += 1
 
 def process_harassment_results(results, batch, found_comments_list):
