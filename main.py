@@ -265,7 +265,15 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
             if not response.text:
                 print("빈 응답 수신")
                 return []
-            return json.loads(response.text).get("results", [])
+            
+            parsed_results = json.loads(response.text).get("results", [])
+            input_count = len(payload_for_gemini)
+            output_count = len(parsed_results)
+            if input_count != output_count:
+                print(f"[경고: LLM 중간 손실 발생] 누락: {input_count - output_count}개")
+
+            return parsed_results
+            
         except json.JSONDecodeError:
             print("JSON 파싱 실패")
             return []
