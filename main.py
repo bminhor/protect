@@ -374,6 +374,7 @@ def load_data(filepath, fmt):
             return data
 
 def save_data(filepath, fmt, data):
+    data.sort(key=lambda x: (x.get("구분") is None, x.get("구분")))
     if fmt == "json":
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
