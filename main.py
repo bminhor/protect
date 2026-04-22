@@ -27,13 +27,19 @@ FORMAT = os.getenv("FORMAT", "csv").lower()
 TAGS_ENV = os.getenv("TAGS", "")
 TAGS = [t.strip() for t in TAGS_ENV.split(",")] if TAGS_ENV.strip() else []
 CATEGORIES_ENV = os.getenv("CATEGORIES", "")
-CATEGORIES_DICT = {k.strip(): v.strip() for line in CATEGORIES_ENV.strip().splitlines() if ":" in line for k, v in [line.split(":", 1)]}
-if not CATEGORIES_DICT:
+ORIGINAL_CATEGORIES_DICT = {k.strip(): v.strip() for line in CATEGORIES_ENV.strip().splitlines() if ":" in line for k, v in [line.split(":", 1)]}
+if not ORIGINAL_CATEGORIES_DICT:
     print("오류: .env의 CATEGORIES가 비어있거나 형식이 올바르지 않습니다.")
     sys.exit(1)
-CATEGORY_DESCRIPTIONS = "\n".join([f"- {k}: {v}" for k, v in CATEGORIES_DICT.items()])
+MASKED_CATEGORIES_DICT = {}
+DECODER_DICT = {}
+for i, (orig_key, val) in enumerate(ORIGINAL_CATEGORIES_DICT.items(), start=1):
+    masked_key = f"TYPE_{i}"
+    MASKED_CATEGORIES_DICT[masked_key] = val
+    DECODER_DICT[masked_key] = orig_key
+CATEGORY_DESCRIPTIONS = "\n".join([f"- {k}: {v}" for k, v in MASKED_CATEGORIES_DICT.items()])
 FULL_PROMPT = f"{PROMPT}\n\n[분류 카테고리]\n{CATEGORY_DESCRIPTIONS}\n\n반드시 위 카테고리(키 값) 중 하나로만 분류하세요."
-CategoryEnum = Enum('CategoryEnum', {k: k for k in CATEGORIES_DICT.keys()})
+CategoryEnum = Enum('CategoryEnum', {k: k for k in MASKED_CATEGORIES_DICT.keys()})
 
 DynamicCommentAnalysis = create_model(
     'CommentAnalysis',
@@ -343,8 +349,9 @@ def process_analysis_results(results, batch):
     for result in results:
         target_comment = next((c for c in batch if c["댓글 ID"] == result.get("comment_id")), None)
         if target_comment:
-            category = result.get("category")
-            target_comment["구분"] = category
+            masked_category = result.get("category")
+            original_category = DECODER_DICT.get(masked_category, masked_category)
+            target_comment["구분"] = original_category
             processed_count += 1
     return processed_count
 
