@@ -8,11 +8,13 @@ import random
 import threading
 import csv
 from datetime import datetime, timezone
+from collections import Counter
+from enum import Enum
 from dotenv import load_dotenv
 from googleapiclient.discovery import build
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import create_model
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
@@ -24,6 +26,26 @@ PROMPT = os.getenv("PROMPT")
 FORMAT = os.getenv("FORMAT", "csv").lower()
 TAGS_ENV = os.getenv("TAGS", "")
 TAGS = [t.strip() for t in TAGS_ENV.split(",")] if TAGS_ENV.strip() else []
+CATEGORIES_ENV = os.getenv("CATEGORIES", "")
+CATEGORIES_DICT = {k.strip(): v.strip() for line in CATEGORIES_ENV.strip().splitlines() if ":" in line for k, v in [line.split(":", 1)]}
+if not CATEGORIES_DICT:
+    print("오류: .env의 CATEGORIES가 비어있거나 형식이 올바르지 않습니다.")
+    sys.exit(1)
+CATEGORY_DESCRIPTIONS = "\n".join([f"- {k}: {v}" for k, v in CATEGORIES_DICT.items()])
+FULL_PROMPT = f"{PROMPT}\n\n[분류 카테고리]\n{CATEGORY_DESCRIPTIONS}\n\n반드시 위 카테고리(키 값) 중 하나로만 분류하세요."
+CategoryEnum = Enum('CategoryEnum', {k: k for k in CATEGORIES_DICT.keys()})
+
+DynamicCommentAnalysis = create_model(
+    'CommentAnalysis',
+    comment_id=(str, ...),
+    category=(CategoryEnum, ...)
+)
+
+DynamicBatchAnalysisResponse = create_model(
+    'BatchAnalysisResponse',
+    results=(list[DynamicCommentAnalysis], ...)
+)
+
 MODEL_RPM_DICT = {
     "gemini-3.1-flash-lite-preview": 15,
     "gemini-3-flash-preview": 5
@@ -37,13 +59,6 @@ global_backoff_until = 0
 
 class FatalAPIError(Exception):
     pass
-
-class CommentAnalysis(BaseModel):
-    comment_id: str
-    is_sexual_harassment: bool
-
-class BatchAnalysisResponse(BaseModel):
-    results: list[CommentAnalysis]
 
 def wait_for_rate_limit(stop_event):
     global global_backoff_until
@@ -274,7 +289,7 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
     if stop_event.is_set():
         return []
     payload_for_gemini = [{"id": c["댓글 ID"], "text": c["내용"]} for c in comments_batch]
-    prompt_with_data = f"{PROMPT} 댓글 데이터: {json.dumps(payload_for_gemini, ensure_ascii=False)}"
+    prompt_with_data = f"{FULL_PROMPT}\n\n댓글 데이터: {json.dumps(payload_for_gemini, ensure_ascii=False)}"
     tries = 1
     while True:
         if stop_event.is_set(): return [] 
@@ -286,7 +301,7 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
                 contents=prompt_with_data,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
-                    response_schema=BatchAnalysisResponse,
+                    response_schema=DynamicBatchAnalysisResponse,
                     temperature=0.0 
                 )
             )
@@ -323,23 +338,20 @@ def analyze_comments_batch(gemini_client, comments_batch, stop_event):
                     return [] 
                 tries += 1
 
-def process_harassment_results(results, batch):
-    found_count = 0
+def process_analysis_results(results, batch):
+    processed_count = 0
     for result in results:
         target_comment = next((c for c in batch if c["댓글 ID"] == result.get("comment_id")), None)
         if target_comment:
-            is_harassment = result.get("is_sexual_harassment", False)
-            target_comment["구분"] = is_harassment
-            if is_harassment:
-                found_count += 1
-    return found_count
+            category = result.get("category")
+            target_comment["구분"] = category
+            processed_count += 1
+    return processed_count
 
 def parse_csv_value(val):
     if val == "" or val is None:
         return None
-    if str(val).lower() == "true": return True
-    if str(val).lower() == "false": return False
-    return val
+    return str(val)
 
 def load_data(filepath, fmt):
     if fmt == "json":
@@ -396,7 +408,7 @@ def main():
 
     os.makedirs('output', exist_ok=True)
 
-    total_grand_found = 0
+    global_category_counts = Counter()
     start_time = time.time()
 
     for target in args.targets:
@@ -445,7 +457,8 @@ def main():
             except Exception as e:
                 print(f"파일 저장 오류: {e}")
             
-            total_grand_found += sum(1 for c in all_comments_pool if c.get("구분") is True)
+            target_counts = Counter(c.get("구분") for c in all_comments_pool if c.get("구분") is not None)
+            global_category_counts.update(target_counts)
             continue
 
         BATCH_SIZE = 50 
@@ -456,7 +469,6 @@ def main():
         print(f"총 {len(unique_videos)}개의 영상에서 {len(pending_comments_pool)}개의 댓글을 수집했습니다.")
         print(f"{BATCH_SIZE}개 단위로 묶어 총 {total_batches}번의 API 요청을 시작합니다.")
 
-        target_found_count = 0
         processed_batches = 0
         stop_event = threading.Event()
         fatal_error_occurred = False
@@ -468,8 +480,7 @@ def main():
                     batch = future_to_batch[future]
                     try:
                         results = future.result()
-                        found_in_batch = process_harassment_results(results, batch)
-                        target_found_count += found_in_batch
+                        process_analysis_results(results, batch)
                         
                         processed_batches += 1
                         print(f"진행 상황: {processed_batches}/{total_batches} 배치 분석 완료")
@@ -483,8 +494,8 @@ def main():
             print(f"예상치 못한 오류가 발생했습니다: {e}")
 
         finally:
-            target_total_found = sum(1 for c in all_comments_pool if c.get("구분") is True)
-            total_grand_found += target_total_found
+            target_counts = Counter(c.get("구분") for c in all_comments_pool if c.get("구분") is not None)
+            global_category_counts.update(target_counts)
 
             try:
                 save_data(output_filename, FORMAT, all_comments_pool)
@@ -502,7 +513,11 @@ def main():
     minutes, seconds = divmod(rem, 60)
     
     print(f"총 실행 시간: {int(hours)}시간 {int(minutes)}분 {seconds:.2f}초")
-    print(f"총 식별된 부적절한 댓글 수: {total_grand_found}개")
+    if not global_category_counts:
+        print("분석된 결과가 없습니다.")
+    else:
+        for cat, count in global_category_counts.items():
+            print(f"- {cat}: {count}개")
 
 if __name__ == "__main__":
     main()
